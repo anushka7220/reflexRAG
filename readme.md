@@ -1,14 +1,14 @@
-# GitMind 🧠
+# reflexRAG 🧠
 
 > Chat with any GitHub repo. Get answers you can trust — with citations that tell you *when* the answer might be outdated.
 
-GitMind is a self-healing RAG pipeline for GitHub repositories. Paste any public repo URL and ask questions about its issues, PRs, discussions, and decision history — without hallucinating.
+reflecRAG is a self-healing RAG pipeline for GitHub repositories. Paste any public repo URL and ask questions about its issues, PRs, discussions, and decision history — without hallucinating.
 
 ---
 
 ## What makes this different
 
-Most "chat with repo" tools index source code. GitMind indexes **human communication** — issues, PR comments, discussions, rejected alternatives — and adds a critic layer that flags when an answer is sourced from a closed issue, a mismatched version, or contradictory chunks.
+Most "chat with repo" tools index source code. reflecRAG indexes **human communication** — issues, PR comments, discussions, rejected alternatives — and adds a critic layer that flags when an answer is sourced from a closed issue, a mismatched version, or contradictory chunks.
 
 **Two features nobody else has built:**
 
@@ -39,7 +39,7 @@ Most "chat with repo" tools index source code. GitMind indexes **human communica
 ## Project structure
 
 ```
-gitmind/
+reflecRAG/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                    # FastAPI app entry point
@@ -171,8 +171,8 @@ gitmind/
 ### 1. Clone
 
 ```bash
-git clone https://github.com/your-username/gitmind.git
-cd gitmind
+git clone https://github.com/your-username/reflecRAG.git
+cd reflecRAG
 ```
 
 ### 2. Backend
