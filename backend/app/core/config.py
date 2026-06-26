@@ -79,7 +79,7 @@ class Settings(BaseSettings):
         return self.GITHUB_API_DELAY_MS / 1000.0
     
 #singleton pattern for settings
-#@lru_cache — this is a standard Python decorator that memoizes a function's return value. First call runs the function and stores the result. Every call after returns the stored result instantly. This is how you make a singleton in Python without a class pattern.
+#@lru_cache — this is a standard Python decorator that memorizes a function's return value. First call runs the function and stores the result. Every call after returns the stored result instantly. This is how you make a singleton in Python without a class pattern.
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
