@@ -30,6 +30,63 @@ log = structlog.get_logger(__name__)
 
 genai.configure(api_key=settings.GEMINI_API_KEY)
 
+from groq import Groq
+_groq_client = Groq(api_key=settings.GROQ_API_KEY) if settings.GROQ_API_KEY else None
+
+
+async def _call_llm_with_fallback(prompt: str, temperature: float = 0.2, max_tokens: int = 2048) -> tuple[str, int]:
+    """
+    Calls Groq first, falls back to Gemini on any error (quota, timeout,
+    unavailability). Returns (raw_response_text, estimated_tokens).
+
+    Groq is primary: fast, generous free tier, avoids the daily Gemini
+    quota wall this project hit repeatedly. Gemini is kept as a real
+    fallback, not just a comment, so a Groq outage does not stop chat.
+    """
+    loop = asyncio.get_event_loop()
+
+    if _groq_client is not None:
+        try:
+            response = await loop.run_in_executor(
+                None,
+                lambda: _groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                ),
+            )
+            text = response.choices[0].message.content
+            tokens = response.usage.total_tokens if response.usage else len(text) // 4
+            log.info("llm_call_success", provider="groq")
+            return text, tokens
+        except Exception as groq_error:
+            log.warning("groq_failed_falling_back", error=str(groq_error))
+    else:
+        log.warning("groq_not_configured_using_gemini")
+
+    try:
+        model = genai.GenerativeModel("gemini-flash-latest")
+        response = await loop.run_in_executor(
+            None,
+            lambda: model.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=temperature,
+                    response_mime_type="application/json",
+                    max_output_tokens=max_tokens,
+                ),
+            ),
+        )
+        text = response.text
+        tokens = _estimate_tokens(response)
+        log.info("llm_call_success", provider="gemini")
+        return text, tokens
+    except Exception as gemini_error:
+        log.error("both_llm_providers_failed", error=str(gemini_error))
+        raise gemini_error
+
 # How many candidate chunks pgvector returns before reranking narrows
 # them down. Wide enough to give the reranker real choices, narrow
 # enough to keep the similarity search itself fast.
@@ -111,26 +168,13 @@ async def generate(state: GraphState) -> dict:
 
     prompt = build_rag_prompt(query_to_use, top_chunks, linked_discussions)
 
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    loop = asyncio.get_event_loop()
-
-    response = await loop.run_in_executor(
-        None,
-        lambda: model.generate_content(
-            prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=0.2,
-                response_mime_type="application/json",
-                max_output_tokens=2048,
-            ),
-        ),
-    )
+    raw_text, tokens_used = await _call_llm_with_fallback(prompt, temperature=0.2, max_tokens=2048)
 
     try:
-        parsed = json.loads(response.text.strip())
+        parsed = json.loads(raw_text.strip())
     except json.JSONDecodeError:
-        log.error("generate_json_parse_failed", raw=response.text[:200])
-        parsed = {"answer": response.text, "cited_chunk_ids": [], "confidence": 0.3}
+        log.error("generate_json_parse_failed", raw=raw_text[:200])
+        parsed = {"answer": raw_text, "cited_chunk_ids": [], "confidence": 0.3}
 
     cited_ids = set(parsed.get("cited_chunk_ids", []))
 
@@ -152,7 +196,7 @@ async def generate(state: GraphState) -> dict:
         "answer_draft": parsed.get("answer", ""),
         "citations": citations,
         "retrieved_chunks": top_chunks,
-        "tokens_used": _estimate_tokens(response),
+        "tokens_used": tokens_used,
         "_llm_confidence": parsed.get("confidence", 0.5),
     }
 
@@ -268,19 +312,8 @@ async def _refine_query(original_query: str, reasons: list[str]) -> str | None:
     prompt = build_query_refinement_prompt(original_query, reasons)
 
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: model.generate_content(
-                prompt,
-                generation_config=genai.GenerationConfig(
-                    temperature=0.3,
-                    response_mime_type="application/json",
-                ),
-            ),
-        )
-        parsed = json.loads(response.text.strip())
+        raw_text, _ = await _call_llm_with_fallback(prompt, temperature=0.3, max_tokens=512)
+        parsed = json.loads(raw_text.strip())
         return parsed.get("refined_query")
     except Exception as e:
         log.error("query_refinement_failed", error=str(e))

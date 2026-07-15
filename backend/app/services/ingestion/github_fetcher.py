@@ -184,10 +184,16 @@ class GitHubFetcher:
     # get its changed files. On a huge repo that is thousands of slow calls.
     # We cap how many commits we enrich with file lists. Beyond this cap we
     # still record the commit (sha, message, author) but skip the files call.
-    MAX_COMMITS_WITH_FILES = 300
+    MAX_COMMITS_WITH_FILES = 60
 
     # Absolute cap on commits scanned at all.
-    MAX_COMMITS = 500
+    MAX_COMMITS = 200
+
+    # Comment caps. A single flame-war issue with 400 comments is not worth
+    # 400 API-page reads; the first handful carry the signal. get_comments()
+    # paginates at 100/call, so capping the SLICE bounds how many pages we pull.
+    MAX_COMMENTS_PER_ISSUE = 20
+    MAX_COMMENTS_PER_PR = 20
 
     def __init__(self, github_token: Optional[str] = None):
         # GithubRetry handles 403/429/5xx at the HTTP layer with backoff and
@@ -284,7 +290,18 @@ class GitHubFetcher:
         (retries up to 4x, then raises to the caller's skip handler).
         """
         try:
-            return [c.body for c in issue.get_comments() if c.body]
+            # issue.comments is a plain int already on the object; if zero,
+            # skip the API call entirely. This alone removes one call for
+            # every commentless issue, which on most repos is the majority.
+            if getattr(issue, "comments", 0) == 0:
+                return []
+            bodies = []
+            for c in issue.get_comments():
+                if c.body:
+                    bodies.append(c.body)
+                if len(bodies) >= self.MAX_COMMENTS_PER_ISSUE:
+                    break
+            return bodies
         except GithubException as e:
             log.warning("issue_comments_github_error", issue_number=issue.number, error=str(e))
             return []
@@ -355,7 +372,11 @@ class GitHubFetcher:
         files_changed = []
 
         try:
-            review_comments = [c.body for c in pr.get_review_comments() if c.body]
+            for c in pr.get_review_comments():
+                if c.body:
+                    review_comments.append(c.body)
+                if len(review_comments) >= self.MAX_COMMENTS_PER_PR:
+                    break
         except GithubException:
             pass
 
@@ -367,11 +388,18 @@ class GitHubFetcher:
                     body=review.body or "",
                     state=review.state or "COMMENTED",
                 ))
+                if len(reviews) >= self.MAX_COMMENTS_PER_PR:
+                    break
         except GithubException:
             pass
 
         try:
-            issue_comments = [c.body for c in pr.get_issue_comments() if c.body]
+            if getattr(pr, "comments", 0):
+                for c in pr.get_issue_comments():
+                    if c.body:
+                        issue_comments.append(c.body)
+                    if len(issue_comments) >= self.MAX_COMMENTS_PER_PR:
+                        break
         except GithubException:
             pass
 
@@ -631,7 +659,24 @@ class GitHubFetcher:
         results: list[SourceFileRaw] = []
         with tempfile.TemporaryDirectory() as tmp:
             with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as tf:
-                tf.extractall(tmp, filter="data")
+                # filter="data" (Python 3.12+) is the safe default that
+                # blocks path traversal and absolute-path members. On older
+                # Python it is not a valid kwarg, so we detect support and
+                # fall back to a manual safe-extraction loop otherwise.
+                try:
+                    tf.extractall(tmp, filter="data")
+                except TypeError:
+                    # Python < 3.12: extractall has no filter kwarg.
+                    # Manually skip any member that would escape tmp via
+                    # ".." or an absolute path, same protection filter="data"
+                    # would have given us.
+                    tmp_real = os.path.realpath(tmp)
+                    for member in tf.getmembers():
+                        dest = os.path.realpath(os.path.join(tmp, member.name))
+                        if not dest.startswith(tmp_real + os.sep):
+                            log.warning("tarball_member_skipped_unsafe", name=member.name)
+                            continue
+                        tf.extract(member, tmp)
 
             # The tarball wraps everything in one top-level dir like
             # "owner-repo-sha/". Strip it so paths are repo-relative.

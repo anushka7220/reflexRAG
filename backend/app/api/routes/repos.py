@@ -93,6 +93,15 @@ async def create_repo(
                 user_id=current_user.id,
             )
 
+        # Cache guard: a repo already ingested by anyone is served instantly,
+        # no re-fetch, no quota cost. But if the prior attempt FAILED or is
+        # stuck queued with no chunks, re-trigger ingestion so a broken row
+        # does not permanently poison the shared cache.
+        if repo_row.get("status") in ("failed", "queued") and repo_row.get("chunk_count", 0) == 0:
+            supabase_admin.table("repos").update({"status": "queued"}).eq("id", repo_id).execute()
+            ingest_repo.delay(repo_id=repo_id, github_url=canonical_url)
+            log.info("stale_repo_reingest_triggered", repo_id=repo_id)
+
         return RepoResponse(**repo_row)
 
     # New repo — create the row and queue ingestion

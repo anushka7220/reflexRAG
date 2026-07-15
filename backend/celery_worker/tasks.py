@@ -157,6 +157,39 @@ def differential_ingest(self, repo_id: str, since_sha: str) -> dict:
             return {"status": "failed", "repo_id": repo_id}
 
 
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="celery_worker.tasks.extract_decisions",
+    max_retries=1,
+    default_retry_delay=120,
+)
+def extract_decisions(self, repo_id: str) -> dict:
+    """
+    Deferred decision-extraction task, queued by the orchestrator AFTER a repo
+    is already marked done and chattable. Runs the slow, quota-free (reads PR
+    chunks from the DB, no GitHub calls) Gemini extraction as its own job so it
+    can never block or time out the main ingestion.
+
+    A failure here leaves the repo fully usable; only the decision-archaeology
+    feature is missing, and the next re-ingest or manual re-run can retry it.
+    """
+    log.info("extract_decisions_task_start", repo_id=repo_id)
+    try:
+        asyncio.run(orchestrator.extract_decisions_for_repo(repo_id=repo_id))
+        log.info("extract_decisions_task_done", repo_id=repo_id)
+        return {"status": "done", "repo_id": repo_id}
+    except SoftTimeLimitExceeded:
+        log.error("extract_decisions_timeout", repo_id=repo_id)
+        return {"status": "timeout", "repo_id": repo_id}
+    except Exception as exc:
+        log.error("extract_decisions_error", repo_id=repo_id, error=str(exc))
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            return {"status": "failed", "repo_id": repo_id}
+
+
 def _mark_repo_failed(repo_id: str, error_msg: str) -> None:
     """
     Writes a failed status to Supabase when a task exhausts all retries.

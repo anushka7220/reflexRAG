@@ -15,7 +15,7 @@ from typing import Literal
 
 
 # ── Source type: what kind of GitHub object this chunk came from ───────────
-SourceType = Literal["issue", "pr", "comment", "commit", "release", "discussion"]
+SourceType = Literal["issue", "pr", "comment", "commit", "release", "discussion", "code"]
 
 # ── Status: current state of the source object on GitHub ──────────────────
 SourceStatus = Literal["open", "closed", "merged", "none"]

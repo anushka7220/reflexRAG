@@ -32,6 +32,7 @@ from app.services.features.decision_extractor import decision_extractor
 from app.services.features.contributor_builder import ContributorBuilder
 from app.utils.version_extractor import build_version_map
 from app.utils.github_parser import parse_github_url
+from app.utils.timestamps import parse_pg_timestamp
 
 log = structlog.get_logger(__name__)
 
@@ -67,7 +68,7 @@ class IngestionOrchestrator:
                 raise ValueError(f"Invalid GitHub URL: {github_url}")
             owner, repo_name = parsed
 
-            fetcher = GitHubFetcher(github_token=None)
+            fetcher = GitHubFetcher(github_token=settings.GITHUB_PERSONAL_ACCESS_TOKEN or None)
             chunker = Chunker(repo_id=repo_id, owner=owner, repo_name=repo_name)
 
             # Stage 1: fetch metadata
@@ -160,19 +161,29 @@ class IngestionOrchestrator:
                 skipped=skipped,
             )
 
-            # Stage 6: feature extraction, runs in parallel since neither
-            # decision extraction nor contributor building depends on the other
+            # Stage 6: contributor building only. This is pure computation
+            # (no API, no LLM) so it is fast and stays in the critical path.
             self._update_job(job_id, stage="extracting", progress=90)
-            await asyncio.gather(
-                self._run_decision_extraction(repo_id, prs),
-                self._run_contributor_building(repo_id, commits, prs),
-            )
+            await self._run_contributor_building(repo_id, commits, prs)
 
-            # Stage 7: mark done
+            # Stage 7: mark done NOW. The repo is fully chattable at this
+            # point: chunks embedded, code linked, contributors built. We do
+            # NOT wait for decision extraction, which is slow (one Gemini call
+            # per PR) and optional. Blocking 'done' on it was a main cause of
+            # the Celery timeout. It runs as a separate deferred task instead.
             self._update_job(job_id, stage="done", progress=100)
             self._update_repo_status(repo_id, status="done", chunk_count=inserted)
+            log.info("ingestion_complete", repo_id=repo_id, chattable=True)
 
-            log.info("ingestion_complete", repo_id=repo_id)
+            # Stage 8: fire-and-forget decision extraction as its own Celery
+            # task. If it fails or times out, the repo is still fully usable;
+            # only the "why" decision-archaeology feature is delayed.
+            try:
+                from celery_worker.tasks import extract_decisions
+                extract_decisions.delay(repo_id=repo_id)
+                log.info("decision_extraction_deferred", repo_id=repo_id)
+            except Exception as e:
+                log.warning("decision_defer_failed", repo_id=repo_id, error=str(e))
 
         except Exception as e:
             log.error("ingestion_failed", repo_id=repo_id, error=str(e))
@@ -194,7 +205,7 @@ class IngestionOrchestrator:
             owner, repo_name = repo_row["owner"], repo_row["name"]
             github_url = repo_row["github_url"]
 
-            fetcher = GitHubFetcher(github_token=None)
+            fetcher = GitHubFetcher(github_token=settings.GITHUB_PERSONAL_ACCESS_TOKEN or None)
             chunker = Chunker(repo_id=repo_id, owner=owner, repo_name=repo_name)
 
             self._update_job(job_id, stage="fetching", progress=20)
@@ -230,6 +241,56 @@ class IngestionOrchestrator:
             log.error("differential_ingest_failed", repo_id=repo_id, error=str(e))
             self._update_job(job_id, stage="failed", progress=0, error_msg=str(e))
             raise
+
+    async def extract_decisions_for_repo(self, repo_id: str) -> None:
+        """
+        Deferred decision-extraction entrypoint, called by the
+        extract_decisions Celery task AFTER the repo is already marked done.
+
+        Reads PR chunks back from the DB rather than re-fetching from GitHub,
+        so this step costs ZERO additional GitHub quota. Reconstructs minimal
+        PR objects from stored chunk content and runs the extractor.
+        """
+        from app.core.supabase import supabase_admin, execute
+
+        rows = execute(
+            supabase_admin.table("chunks")
+            .select("source_id, content")
+            .eq("repo_id", repo_id)
+            .eq("source_type", "pr")
+            .execute()
+        )
+        if not rows:
+            log.info("no_pr_chunks_to_extract", repo_id=repo_id)
+            return
+
+        # Group chunk text by PR number so the extractor sees each PR whole.
+        from collections import defaultdict
+        by_pr = defaultdict(list)
+        for r in rows:
+            by_pr[r["source_id"]].append(r["content"])
+
+        decision_count = 0
+        for pr_number, pieces in by_pr.items():
+            body = "\n\n".join(pieces)
+            if len(body) < 50:
+                continue
+            try:
+                extraction = await decision_extractor.extract(
+                    pr_body=body,
+                    comments=[],
+                    source_id=f"pr#{pr_number}",
+                )
+                if extraction:
+                    embedding = await embedding_service.embed_single(extraction.decision)
+                    # source_id is stored as "pr#123"; strip to the number for save.
+                    num = str(pr_number).replace("pr#", "")
+                    self._save_decision_node(repo_id, extraction, embedding, num)
+                    decision_count += 1
+            except Exception as e:
+                log.warning("deferred_decision_extract_failed", pr=pr_number, error=str(e))
+
+        log.info("deferred_decision_extraction_complete", repo_id=repo_id, count=decision_count)
 
     async def _run_decision_extraction(self, repo_id: str, prs: list) -> None:
         """
@@ -354,7 +415,7 @@ class IngestionOrchestrator:
         version_map = {}
         for row in rows:
             if row.get("version_tag"):
-                dt = datetime.fromisoformat(row["source_created_at"].replace("Z", "+00:00"))
+                dt = parse_pg_timestamp(row["source_created_at"])
                 version_map[dt] = row["version_tag"]
         return version_map
 

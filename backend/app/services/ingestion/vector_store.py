@@ -26,6 +26,7 @@ from datetime import datetime
 
 from app.core.supabase import supabase_admin, execute
 from app.models.chunk import Chunk, ChunkResult
+from app.utils.timestamps import parse_pg_timestamp
 
 log = structlog.get_logger(__name__)
 
@@ -228,23 +229,42 @@ class VectorStore:
             log.error("chunk_delete_failed", repo_id=repo_id, error=str(e))
             return 0
 
-    def _get_existing_hashes(self, hashes: list[str]) -> set[str]:
+    def _get_existing_hashes(
+        self,
+        hashes: list[str],
+        batch_size: int = 100,
+    ) -> set[str]:
         """
         Batch-fetches content hashes that already exist in the DB.
-        Returns a set for O(1) lookup in the upsert loop.
+
+        Supabase/PostgREST can struggle with very large IN() lists,
+        so split them into smaller batches and merge the results.
         """
+        existing: set[str] = set()
+
         try:
-            response = (
-                supabase_admin
-                .table("chunks")
-                .select("content_hash")
-                .in_("content_hash", hashes)
-                .execute()
-            )
-            rows = execute(response)
-            return {row["content_hash"] for row in rows}
+            for i in range(0, len(hashes), batch_size):
+                batch = hashes[i:i + batch_size]
+
+                response = (
+                    supabase_admin
+                    .table("chunks")
+                    .select("content_hash")
+                    .in_("content_hash", batch)
+                    .execute()
+                )
+
+                rows = execute(response)
+                existing.update(row["content_hash"] for row in rows)
+
+            return existing
+
         except Exception as e:
-            log.error("hash_check_failed", error=str(e))
+            log.error(
+                "hash_check_failed",
+                error=str(e),
+                total_hashes=len(hashes),
+            )
             return set()
 
     def _chunk_to_row(self, chunk: Chunk) -> dict:
@@ -268,20 +288,34 @@ class VectorStore:
         }
 
     def _row_to_chunk(self, row: dict) -> Chunk:
-        """Converts a raw Supabase row dict back into a Chunk dataclass."""
+        """
+        Converts a raw Supabase row dict back into a Chunk dataclass.
+
+        Supabase's REST layer sometimes serializes the pgvector embedding
+        column as a JSON string rather than a native array, depending on
+        the query path. Downstream cosine similarity does elementwise
+        float multiplication, which crashes with "can't multiply sequence
+        by non-int of type str" if this is left as a string. Parse defensively.
+        """
+        embedding = row.get("embedding", [])
+        if isinstance(embedding, str):
+            import json
+            try:
+                embedding = json.loads(embedding)
+            except (json.JSONDecodeError, TypeError):
+                embedding = []
+
         return Chunk(
             id=row.get("id", ""),
             repo_id=row["repo_id"],
             content=row["content"],
-            embedding=row.get("embedding", []),
+            embedding=embedding,
             source_type=row["source_type"],
             source_id=row["source_id"],
             status=row.get("status", "none"),
             version_tag=row.get("version_tag"),
             content_hash=row["content_hash"],
-            source_created_at=datetime.fromisoformat(
-                row["source_created_at"].replace("Z", "+00:00")
-            ),
+            source_created_at=parse_pg_timestamp(row["source_created_at"]),
             url=row.get("url", ""),
             file_path=row.get("file_path"),
             language=row.get("language"),

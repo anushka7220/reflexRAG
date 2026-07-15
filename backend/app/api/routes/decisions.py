@@ -12,6 +12,7 @@ from app.services.ingestion.vector_store import vector_store
 from app.services.ingestion.embedding_service import embedding_service
 
 import structlog
+from app.utils.timestamps import parse_pg_timestamp
 
 log = structlog.get_logger(__name__)
 
@@ -122,9 +123,7 @@ def _row_to_response(row: dict, fetch_evidence: bool = False) -> DecisionNodeRes
         alternatives_rejected=alternatives,
         reasoning=row.get("reasoning", ""),
         evidence=evidence,
-        created_at=datetime.fromisoformat(
-            row["created_at"].replace("Z", "+00:00")
-        ),
+        created_at=parse_pg_timestamp(row["created_at"]),
     )
 
 

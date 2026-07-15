@@ -31,8 +31,6 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_ID: str
     GITHUB_CLIENT_SECRET: str
     GITHUB_WEBHOOK_SECRET: str
-    GITHUB_PERSONAL_ACCESS_TOKEN: str
-
 
     # ── Supabase ───────────────────────────────────────────────────────────
     SUPABASE_URL: str
@@ -41,7 +39,8 @@ class Settings(BaseSettings):
 
     # ── LLM ────────────────────────────────────────────────────────────────
     GEMINI_API_KEY: str
-    GROQ_API_KEY: str 
+    GROQ_API_KEY: str = ""
+    GITHUB_PERSONAL_ACCESS_TOKEN: str = ""
 
     # ── Redis (Celery broker) ──────────────────────────────────────────────
     REDIS_URL: str
@@ -53,8 +52,8 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # ── Ingestion limits ───────────────────────────────────────────────────
-    MAX_ISSUES_PER_REPO: int = 2000
-    MAX_PRS_PER_REPO: int = 1000
+    MAX_ISSUES_PER_REPO: int = 200
+    MAX_PRS_PER_REPO: int = 150
     MAX_CHUNK_SIZE_TOKENS: int = 512
     CHUNK_OVERLAP_TOKENS: int = 50
 
