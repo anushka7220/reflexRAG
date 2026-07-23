@@ -3,6 +3,7 @@ import type { KeyboardEvent } from "react";
 import { api, streamChat } from "../lib/api";
 import type { Repo, StoredMessage, Turn } from "../lib/types";
 import Citations from "./Citations";
+import Inkling from "./Inkling";
 
 const EXAMPLES = [
   { kind: "why", text: "Why is this built the way it is?" },
@@ -210,7 +211,7 @@ export default function Chat({
               <div style={{ marginTop: 16 }}>
                 {!t.answer && t.streaming && (
                   <div className="thinking">
-                    <span className="thinking-dot" />
+                    <Inkling mood="working" size={40} />
                     Reading the repository
                   </div>
                 )}
@@ -242,7 +243,7 @@ export default function Chat({
       </div>
 
       <div className="composer">
-        <div className="composer-inner">
+        <div className="composer-inner" data-guide="composer">
           <textarea
             ref={taRef}
             rows={1}
