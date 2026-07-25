@@ -56,10 +56,12 @@ class Settings(BaseSettings):
     MAX_PRS_PER_REPO: int = 150
     MAX_CHUNK_SIZE_TOKENS: int = 512
     CHUNK_OVERLAP_TOKENS: int = 50
+    MAX_EMBED_CHUNKS: int = 1500
 
     # Delay between GitHub API paginated calls to avoid hitting secondary rate limit.
     # GitHub allows max 90 requests/min — 700ms delay keeps us safely under.
-    GITHUB_API_DELAY_MS: int = 700
+    GITHUB_API_DELAY_MS: int = 100
+    USE_GRAPHQL_FETCHER: bool = False
 
     # ── Free tier limits ───────────────────────────────────────────────────
     FREE_TIER_REPOS_LIMIT: int = 3
@@ -104,8 +106,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-
 # This is what every other file imports.
 # Usage: from app.core.config import settings
 settings = get_settings()

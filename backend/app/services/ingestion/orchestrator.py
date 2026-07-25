@@ -36,6 +36,14 @@ from app.utils.timestamps import parse_pg_timestamp
 
 log = structlog.get_logger(__name__)
 
+def _make_fetcher():
+    """Chooses the fetcher off the config flag. GraphQL is ~6-33x faster on
+    issues/PRs; commits and the tarball delegate to REST inside it either way."""
+    token = settings.GITHUB_PERSONAL_ACCESS_TOKEN or None
+    if settings.USE_GRAPHQL_FETCHER:
+        from app.services.ingestion.github_fetcher_graphql import GitHubFetcherGraphQL
+        return GitHubFetcherGraphQL(github_token=token)
+    return GitHubFetcher(github_token=token)
 
 class IngestionOrchestrator:
     """
@@ -67,8 +75,7 @@ class IngestionOrchestrator:
             if not parsed:
                 raise ValueError(f"Invalid GitHub URL: {github_url}")
             owner, repo_name = parsed
-
-            fetcher = GitHubFetcher(github_token=settings.GITHUB_PERSONAL_ACCESS_TOKEN or None)
+            fetcher = fetcher = _make_fetcher()
             chunker = Chunker(repo_id=repo_id, owner=owner, repo_name=repo_name)
 
             # Stage 1: fetch metadata
@@ -146,14 +153,81 @@ class IngestionOrchestrator:
                 all_chunks.extend(code_chunker.chunk_files(source_files))
 
             log.info("chunking_complete", repo_id=repo_id, total_chunks=len(all_chunks))
+            # Cap total chunks before embedding. Embedding is CPU-bound and
+            # the real ingestion bottleneck; an unbounded chunk count on a
+            # large repo blows past the task time limit (and starves the
+            # broker heartbeat, dropping the Redis connection). We trim to a
+            # budget, but priority-first so the cap removes noise, not signal:
+            # README and human discussion (the product's differentiator) are
+            # kept before plain code, which is trimmed from the tail.
+            if len(all_chunks) > settings.MAX_EMBED_CHUNKS:
+                def _priority(c):
+                    st = getattr(c, "source_type", "code")
+                    fp = (getattr(c, "file_path", "") or "").lower()
+                    if st == "code" and "readme" in fp:
+                        return 0
+                    if st in ("issue", "pr", "comment", "commit", "release", "discussion"):
+                        return 1
+                    if st == "code" and getattr(c, "files_touched", None):
+                        return 2
+                    if st == "code":
+                        return 3
+                    return 4
 
-            # Stage 4: embed everything
+                original = len(all_chunks)
+                all_chunks = sorted(all_chunks, key=_priority)[: settings.MAX_EMBED_CHUNKS]
+                log.warning(
+                    "chunk_cap_applied",
+                    repo_id=repo_id,
+                    original=original,
+                    capped_to=len(all_chunks),
+                )
+
+            # Stage 4+5: embed and insert in checkpointed batches.
+            #
+            # Embedding is the CPU-bound bottleneck and the thing that times
+            # out on mid-size repos. Doing it all-then-insert meant a timeout
+            # at chunk 1,400 lost all 1,400. Instead we embed+insert ~100 at a
+            # time, so every completed batch is persisted immediately.
+            #
+            # Resume: chunks already stored (by content_hash) are skipped
+            # BEFORE embedding, so a restarted task re-embeds only what's
+            # missing. Re-fetch/re-chunk is cheap (GraphQL); re-embedding is
+            # not, so we never repeat it.
             self._update_job(job_id, stage="embedding", progress=60)
-            all_chunks = await embedding_service.embed_chunks(all_chunks)
 
-            # Stage 5: upsert to pgvector
-            self._update_job(job_id, stage="embedding", progress=80)
-            inserted, skipped = vector_store.upsert_chunks(all_chunks)
+            all_hashes = [c.content_hash for c in all_chunks]
+            already_done = vector_store.existing_hashes_for(all_hashes, repo_id)
+            pending = [c for c in all_chunks if c.content_hash not in already_done]
+            if len(pending) != len(all_chunks):
+                log.info(
+                    "embed_resume",
+                    repo_id=repo_id,
+                    already_embedded=len(all_chunks) - len(pending),
+                    remaining=len(pending),
+                )
+
+            EMBED_BATCH = 100
+            inserted = len(already_done)
+            skipped = 0
+            total_pending = len(pending)
+
+            for i in range(0, total_pending, EMBED_BATCH):
+                batch = pending[i : i + EMBED_BATCH]
+                embedded = await embedding_service.embed_chunks(batch)
+                ins, skp = vector_store.upsert_chunks(embedded)
+                inserted += ins
+                skipped += skp
+
+                done = i + len(batch)
+                pct = 60 + int(30 * done / total_pending) if total_pending else 90
+                self._update_job(job_id, stage="embedding", progress=pct)
+                log.info(
+                    "embed_checkpoint",
+                    repo_id=repo_id,
+                    embedded=done,
+                    total=total_pending,
+                )
             log.info(
                 "upsert_complete",
                 repo_id=repo_id,
@@ -205,7 +279,7 @@ class IngestionOrchestrator:
             owner, repo_name = repo_row["owner"], repo_row["name"]
             github_url = repo_row["github_url"]
 
-            fetcher = GitHubFetcher(github_token=settings.GITHUB_PERSONAL_ACCESS_TOKEN or None)
+            fetcher = fetcher = _make_fetcher()
             chunker = Chunker(repo_id=repo_id, owner=owner, repo_name=repo_name)
 
             self._update_job(job_id, stage="fetching", progress=20)

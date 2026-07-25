@@ -88,7 +88,17 @@ class Critic:
 
         contradiction_flags = await self._check_contradictions(top_chunks)
         flags.extend(contradiction_flags)
-
+        # Two chunks of the same type and age produce identical warning text
+        # (e.g. multiple closed comments from the same issue). Collapse flags
+        # with identical detail so the user sees each distinct warning once,
+        # and so confidence is not penalised repeatedly for the same problem.
+        seen = set()
+        deduped = []
+        for f in flags:
+            if f.detail not in seen:
+                seen.add(f.detail)
+                deduped.append(f)
+        flags = deduped
         structural_confidence = self._compute_structural_confidence(flags, len(top_chunks))
 
         # Final confidence blends the critic's structural assessment with

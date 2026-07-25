@@ -39,6 +39,9 @@ def create_celery_app() -> Celery:
         "task_serializer": "json",
         "accept_content": ["json"],
         "result_serializer": "json",
+        "broker_transport_options": {"visibility_timeout": 3600},  # don't redeliver a task for 1 hour
+        "broker_heartbeat": 0,                                       # don't kill workers that go silent during long embeds
+        "broker_connection_retry_on_startup": True,
 
         "timezone": "UTC",
         "enable_utc": True,
@@ -47,7 +50,7 @@ def create_celery_app() -> Celery:
         # over 20 minutes to fetch. The hard limit gives a safety margin.
         "task_acks_late": True,
         "task_time_limit":      60 * 60,    # hard kill at 60 minutes
-        "task_soft_time_limit": 60 * 30,    # raises SoftTimeLimitExceeded at 30
+        "task_soft_time_limit": 60 * 55,    # raises SoftTimeLimitExceeded at 30
 
         # Take one task at a time. Each ingestion is already heavy enough
         # that prefetching more would cause memory pressure on the free tier.

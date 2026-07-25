@@ -61,26 +61,37 @@ class VectorStore:
         """
         if not chunks:
             return 0, 0
+        
+        repo_id = chunks[0].repo_id
 
         inserted = 0
         skipped  = 0
 
         # Batch the hash check to avoid N+1 queries.
         # One query to find all existing hashes, then check locally.
+        repo_id     = chunks[0].repo_id
         all_hashes  = [c.content_hash for c in chunks]
-        existing    = self._get_existing_hashes(all_hashes)
+        existing    = self._get_existing_hashes(all_hashes, repo_id)
 
         rows_to_insert = []
+        seen_in_batch = set()
         for chunk in chunks:
             if chunk.content_hash in existing:
                 skipped += 1
                 continue
-
+            # Two chunks in the SAME batch can share a content_hash when their
+            # text is identical (empty __init__.py, license headers, repeated
+            # boilerplate). Neither is in the DB yet, so the existing-check
+            # above misses them; without this guard both reach the INSERT and
+            # the whole batch dies on the unique constraint.
+            if chunk.content_hash in seen_in_batch:
+                skipped += 1
+                continue
             if not chunk.embedding:
                 log.warning("chunk_missing_embedding", source_id=chunk.source_id)
                 skipped += 1
                 continue
-
+            seen_in_batch.add(chunk.content_hash)
             rows_to_insert.append(self._chunk_to_row(chunk))
 
         if rows_to_insert:
@@ -88,7 +99,9 @@ class VectorStore:
             for i in range(0, len(rows_to_insert), 100):
                 batch = rows_to_insert[i : i + 100]
                 try:
-                    response = supabase_admin.table("chunks").insert(batch).execute()
+                    response = supabase_admin.table("chunks").upsert(
+                        batch, on_conflict="repo_id,content_hash"
+                    ).execute()
                     execute(response)
                     inserted += len(batch)
                     log.info("chunks_inserted", batch=len(batch))
@@ -232,41 +245,31 @@ class VectorStore:
     def _get_existing_hashes(
         self,
         hashes: list[str],
+        repo_id: str,
         batch_size: int = 100,
     ) -> set[str]:
-        """
-        Batch-fetches content hashes that already exist in the DB.
-
-        Supabase/PostgREST can struggle with very large IN() lists,
-        so split them into smaller batches and merge the results.
-        """
         existing: set[str] = set()
-
         try:
             for i in range(0, len(hashes), batch_size):
                 batch = hashes[i:i + batch_size]
-
                 response = (
                     supabase_admin
                     .table("chunks")
                     .select("content_hash")
+                    .eq("repo_id", repo_id)
                     .in_("content_hash", batch)
                     .execute()
                 )
-
                 rows = execute(response)
                 existing.update(row["content_hash"] for row in rows)
-
             return existing
-
         except Exception as e:
-            log.error(
-                "hash_check_failed",
-                error=str(e),
-                total_hashes=len(hashes),
-            )
-            return set()
-
+            log.error("hash_check_failed", error=str(e))
+            return existing
+    def existing_hashes_for(self, hashes: list[str], repo_id: str) -> set[str]:
+        """Public wrapper: which of these hashes already exist for this repo.
+        Used by the orchestrator's resume path to skip re-embedding."""
+        return self._get_existing_hashes(hashes, repo_id)
     def _chunk_to_row(self, chunk: Chunk) -> dict:
         """Converts a Chunk dataclass to a dict for Supabase insert."""
         return {

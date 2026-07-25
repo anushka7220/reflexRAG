@@ -284,15 +284,11 @@ async def finalize(state: GraphState) -> dict:
     """
     answer = state["answer_draft"]
     flags = state["staleness_flags"]
-
-    if flags:
-        warning_lines = []
-        for flag in flags:
-            warning_lines.append(f"Note: {flag.detail}")
-        warnings_block = "\n\n" + "\n".join(warning_lines)
-        final = answer + warnings_block
-    else:
-        final = answer
+    # Staleness warnings render as their own styled cards in the UI (driven
+    # by staleness_flags), so we do NOT also inject them into the answer
+    # text. Appending them here caused every warning to appear twice: once
+    # as inline "Note:" prose and once as a card.
+    final = answer
 
     log.info(
         "node_finalize_done",
