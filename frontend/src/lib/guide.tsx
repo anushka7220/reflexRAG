@@ -22,6 +22,9 @@ export interface GuideAim {
   target: string | null;
   say?: string;
   mood?: GuideMood;
+  /** Hide him entirely. Once a conversation is underway the user knows what
+      to do, and a guide hovering over their reading is just noise. */
+  hidden?: boolean;
 }
 
 interface GuideApi {

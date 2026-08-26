@@ -19,6 +19,41 @@ Every engineer from interns to staff engineers, repeatedly pays the "understandi
 
 ---
 
+## Contributor Mode (in progress)
+
+A guided mode for early-to-mid open-source contributors, built directly into the chat interface of any ingested repo. Where the default **Explore** mode answers *"how does this work,"* **Contribute** mode answers *"how do I actually contribute here"* — grounded in the repo's full history, which generic assistants can't see.
+
+The chat header carries a segmented **Explore / Contribute** toggle. Contribute mode replaces the empty-state prompts with six action tiles, color-grouped by intent so six options read as three clusters rather than a wall of choices:
+
+**Finding & understanding** *(rust)*
+- **Find issues for me** — open, currently-available issues matched to your skills
+- **Understand an issue** — paste any issue URL for a plain-language breakdown
+- **Safe first change** — the lowest-risk place to make a first PR
+
+**How the repo works** *(blue)*
+- **How contributions work here** — this repo's real review culture, PR-size norms, and response expectations, inferred from past PRs rather than just `CONTRIBUTING.md`
+- **Show me a past PR like mine** — a solved PR surfaced as a working template
+
+**People** *(sand)*
+- **Who should I ask** — the right maintainer for an area, from the contributor map
+
+**Skill matching with decomposition.** Skills are auto-inferred from your GitHub profile and editable. Instead of a binary can-you-do-this, each suggested issue is *decomposed* by skill — e.g. *"70% Python/tokenization (you have this), 30% CUDA profiling (you don't)"* — so you can judge fit honestly, including exactly where you'd need help.
+
+**Issue orientation.** Paste an unfamiliar issue and get an *issue map*: a plain-language explanation first, then the skill-fit breakdown, then the files it likely touches, similar past PRs, and who to ask. This replaces the hours of code "archaeology" it usually takes to work out where an issue even lives. In Contribute mode the left panel swaps from conversations to your skills and the issues you're tracking.
+
+---
+
+## Inkling — the guide
+
+Inkling is reflexRAG's octopus guide, and the octopus *is* the architecture: eight arms reaching into issues, PRs, commits, and code, one brain synthesizing them (rust arms for the *why*, blue for the *what*).
+
+- **Explore mode** — a curious companion offering ambient, low-key guidance as you move around a repo.
+- **Contribute mode** — a journey guide. Inkling tracks your progress through a quiet checklist (understood the issue → found the files → checked who to ask → seen a similar PR) and offers a contextual nudge when something useful is one step away.
+
+Inkling only speaks when there's something worth saying, appears at most occasionally, and is always dismissable with a small ×. The restraint is the point — a guide you can ignore, not an assistant you have to manage.
+
+---
+
 ## Tech stack
 
 | Layer | Technology |
@@ -398,6 +433,8 @@ pytest
 
 ## Roadmap
 
+- [ ] **Contributor Mode** — skill-decomposition issue matching + issue orientation maps (see above; in active development)
+- [ ] **Inkling journey guide** — progress checklist + contextual nudges in Contribute mode
 - [ ] Private repo support (requires `repo` OAuth scope)
 - [ ] GitHub App installation tokens (3× higher rate limit)
 - [ ] Stripe billing integration

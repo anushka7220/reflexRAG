@@ -83,7 +83,11 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
-  margin: 0; background: var(--canvas); color: var(--text);
+  margin: 0; color: var(--text);
+  /* ocean gradient: lighter surface at the top, deeper/darker water at
+     the bottom, built from the same blue tokens used everywhere else */
+  background: linear-gradient(180deg, var(--canvas) 0%, var(--water-2) 55%, var(--canvas-2) 100%);
+  background-attachment: fixed;
   font-family: var(--font-body); font-size: 15px; line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   transition: background var(--t-base) var(--ease), color var(--t-base) var(--ease);
@@ -213,7 +217,7 @@ button, input, textarea { font: inherit; color: inherit; }
 .primary-btn:active:not(:disabled) { transform: translateY(0); }
 .primary-btn:disabled { opacity: 0.45; cursor: default; }
 
-.hint { margin-top: 12px; font-size: 12px; color: var(--faint); }
+.hint { margin-top: 12px; font-size: 12px; color: var(--muted); }
 .err-note { margin-top: 14px; padding: 11px 13px; border: 1px solid rgba(208,96,76,0.4); background: rgba(208,96,76,0.1); border-radius: var(--r-sm); color: var(--err); font-size: 13px; }
 
 .recent { margin-top: 30px; }
@@ -286,6 +290,20 @@ a.cite:hover { transform: translateX(2px); }
 
 .spin { width: 14px; height: 14px; border: 2px solid var(--sand); border-top-color: var(--rust); border-radius: 50%; animation: spinrot 0.7s linear infinite; display: inline-block; }
 @keyframes spinrot { to { transform: rotate(360deg); } }
+/* ---------- gentle floating loop, landing panels only ----------
+   Only the two big standalone panels on the landing/sign-in screen get a
+   whisper of float, so the scene isn't dead-static against the ocean.
+   Everything that holds text the user reads stays perfectly still —
+   floating content reads as unstable, and a card bobbing inside a panel
+   that also bobs is compounding jitter. Reading surfaces do not move. */
+@keyframes floatBox {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+.hero-card, .demo {
+  animation: floatBox 12s ease-in-out infinite;
+}
+.demo { animation-delay: -5s; }
 
 /* ---------- inkling + hopping guide ---------- */
 .inkling { display: block; }
@@ -319,26 +337,148 @@ a.cite:hover { transform: translateX(2px); }
 }
 /* arms undulate slowly, like they are moving through water */
 .guide .inkling .arm { animation-duration: 5.2s; }
+
+/* ---------- wake: a few bubbles left behind while he swims ----------
+   Spawned in JS along his actual (eased) path, positioned fixed at
+   viewport coords, then left to rise and fade on their own — each one
+   is a short-lived, self-removing element, not a persistent trail. */
+.wake-bubble {
+  position: fixed;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--blue-bright), var(--blue) 70%, transparent 100%);
+  opacity: 0.55;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 55;
+  animation: wakeRise 1.1s ease-out forwards;
+}
+@keyframes wakeRise {
+  0%   { opacity: 0.55; transform: translate(-50%, -50%) scale(0.6); }
+  70%  { opacity: 0.32; }
+  100% { opacity: 0; transform: translate(-50%, -160%) scale(1.2); }
+}
+
+/* ---------- ambient current: a soft ripple breathing under him ----------
+   Always present at low opacity so idling reads as floating *in* the
+   water, not stickered on top of it — separate from the wake, which
+   only appears while he's actually traveling. */
+.guide-ripple {
+  position: absolute;
+  left: 50%; top: 76%;
+  width: 64px; height: 20px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, var(--blue-bright) 0%, var(--blue) 45%, transparent 75%);
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: -1;
+  animation: rippleBreathe 4.5s ease-in-out infinite;
+}
+@keyframes rippleBreathe {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.14; }
+  50%      { transform: translate(-50%, -50%) scale(1.18); opacity: 0.3; }
+}
+
+/* ---------- alert: something's wrong nearby (error / staleness) ----------
+   The ripple shifts from blue to rust/err and quickens, and a faint
+   darker current sweeps through the water behind him — no change to his
+   own body, the environment tells you first. Toggle by setting
+   `alert: true` on the guide aim wherever an error or staleness flag
+   is surfaced. */
+.guide-alert .guide-ripple {
+  background: radial-gradient(ellipse at center, var(--err) 0%, var(--rust-dim) 45%, transparent 75%);
+  animation: rippleBreathe 2.6s ease-in-out infinite, currentDim 3.2s ease-in-out infinite;
+}
+.guide-alert::before {
+  content: "";
+  position: absolute;
+  inset: -34px -50px;
+  border-radius: 40%;
+  background: radial-gradient(ellipse at center, rgba(208,96,76,0.18), transparent 70%);
+  z-index: -2;
+  pointer-events: none;
+  animation: currentPass 3.2s ease-in-out infinite;
+}
+@keyframes currentDim {
+  0%, 100% { opacity: 0.2; }
+  50%      { opacity: 0.5; }
+}
+@keyframes currentPass {
+  0%   { transform: translateX(-16px); opacity: 0; }
+  30%  { opacity: 0.85; }
+  60%  { opacity: 0.85; }
+  100% { transform: translateX(16px); opacity: 0; }
+}
+
+/* ============================================================
+   Inkling caption — plain text above him, wrapping to ~2 lines,
+   with a faint gradient wash (no hard container/border/tail).
+
+   REPLACE all existing `.guide-bubble` rules in styles.css with
+   this block.
+   ============================================================ */
+/* ============================================================
+   Inkling caption — a clean, opaque tooltip above him.
+
+   Opaque background so it NEVER blends with content behind it.
+   Tight geometry, small centered tail, soft shadow, one rust
+   accent line. Reads like a Linear/Figma tooltip, not a comic
+   speech balloon.
+
+   REPLACE all existing `.guide-bubble` rules in styles.css with
+   this block.
+   ============================================================ */
+
 .guide-bubble {
-  position: absolute; top: -14px; left: 50%; transform: translateX(-50%) translateY(-100%);
-  white-space: normal; width: max-content; max-width: 260px; text-align: center;
-  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.45;
-  background: var(--paper); color: var(--text);
-  border: 1px solid var(--line-soft); border-radius: 12px;
-  padding: 6px 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  position: absolute;
+  bottom: calc(100% + 12px);          /* above Inkling, clear of his head */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 150px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--paper);           /* fully opaque — content behind can't bleed through */
+  border: 1px solid var(--line-soft);
+  border-top: 2px solid var(--rust);  /* single accent edge, the only flourish */
+  border-radius: 10px;
+  padding: 7px 12px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.28);
+  z-index: 61;                        /* above the guide's own layer */
+  pointer-events: none;
 }
-.guide-bubble.anchor-right { left: auto; right: -6px; transform: translateX(0) translateY(-100%); text-align: right; }
-.guide-bubble.anchor-right::after { left: auto; right: 26px; }
-.guide-bubble.anchor-left { left: -6px; transform: translateX(0) translateY(-100%); text-align: left; }
-.guide-bubble.anchor-left::after { left: 26px; transform: translateX(0) rotate(45deg); }
+
+/* small tail pointing down to Inkling — a solid paper diamond,
+   opaque so nothing shows through it either */
 .guide-bubble::after {
-  content: ""; position: absolute; bottom: -5px; left: 50%; transform: translateX(-50%) rotate(45deg);
-  width: 8px; height: 8px; background: var(--paper); border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 5px;
+  height: 5px;
+  background: var(--paper);
+  border-right: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
 }
+
+/* near screen edges, shift the box horizontally but keep the tail
+   pointing at Inkling by re-centering the tail under him */
+.guide-bubble.anchor-right { transform: translateX(-72%); }
+.guide-bubble.anchor-right::after { left: 72%; }
+.guide-bubble.anchor-left  { transform: translateX(-28%); }
+.guide-bubble.anchor-left::after  { left: 28%; }
 
 @media (prefers-reduced-motion: reduce) {
   .inkling .arm, .guide-float, .ftr-wave { animation: none; }
   .guide { transition: none; }
+  .hero-card, .demo { animation: none; }
+  .wake-bubble { display: none; }
+  .guide-ripple, .guide-alert::before { animation: none; }
 }
 
 @media (max-width: 900px) {
@@ -352,4 +492,225 @@ a.cite:hover { transform: translateX(2px); }
 @media (max-width: 560px) {
   .headline { font-size: 24px; }
   .hdr-repo, .ftr-mono, .hdr-user-name { display: none; }
+}
+/* ============================================================
+   Sign-in hero — pitch left, auto-swiping demo carousel right.
+   Appended to the tidepool system; reuses existing tokens.
+   ============================================================ */
+
+.hero {
+  display: grid; grid-template-columns: 5fr 6fr;
+  align-items: center; gap: 40px;
+  width: 100%; max-width: 1120px; margin: 0 auto;
+  animation: rise var(--t-slow) var(--ease) both;
+}
+.hero-copy { max-width: 32rem; }
+.hero-copy .headline { margin-top: 12px; }
+.hero-copy .sub { max-width: 40ch; }
+.hero-copy .sub em { font-style: normal; color: var(--rust); font-weight: 600; }
+
+/* ---- glowing CTA: a soft pulsing halo to pull the eye ---- */
+.primary-btn-glow { position: relative; }
+.primary-btn-glow::after {
+  content: ""; position: absolute; inset: -3px; border-radius: inherit;
+  background: var(--rust); z-index: -1; opacity: 0.55;
+  filter: blur(9px); animation: ctaGlow 2.4s ease-in-out infinite;
+}
+@keyframes ctaGlow {
+  0%, 100% { opacity: 0.30; filter: blur(8px); }
+  50%      { opacity: 0.70; filter: blur(15px); }
+}
+
+/* ---- demo carousel ---- */
+.hero-proof { min-width: 0; }
+.demo {
+  background: var(--paper); border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg); padding: 20px 22px 16px;
+  box-shadow: 0 14px 48px rgba(0,0,0,0.32);
+  min-height: 372px;               /* fixed so panels don't jolt the layout */
+  display: flex; flex-direction: column;
+}
+.demo-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.demo-head-dots { display: flex; gap: 5px; }
+.demo-head-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: block; }
+.demo-head-dots i:first-child { background: var(--rust); opacity: 0.7; }
+.demo-head-tag {
+  margin-left: auto; font-family: var(--font-mono); font-size: 9px;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+}
+
+.demo-q {
+  font-size: 14.5px; color: var(--text);
+  background: var(--paper-2); border: 1px solid var(--line-soft);
+  border-radius: var(--r-md) var(--r-md) var(--r-md) 4px;
+  padding: 11px 14px; line-height: 1.5; min-height: 42px;
+}
+.demo-caret {
+  display: inline-block; width: 7px; height: 15px; margin-left: 1px;
+  background: var(--rust); vertical-align: text-bottom;
+  animation: blink 1.05s steps(2, start) infinite;
+}
+
+.demo-body { margin-top: 14px; flex: 1; }
+.demo-body.in { animation: rise var(--t-base) var(--ease) both; }
+.demo-a { font-size: 14px; line-height: 1.6; color: var(--text); }
+.demo-a-muted { color: var(--muted); margin-top: 10px; font-size: 13px; }
+
+.demo-split { display: flex; align-items: center; gap: 10px; height: 22px; margin: 16px 0 10px; padding-left: 4px; }
+.demo-split-rail { width: 2px; height: 100%; border-radius: 2px; background: linear-gradient(180deg, var(--blue-bright), var(--rust)); }
+.demo-split-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--rust-dim); }
+
+.demo-cite { background: var(--paper-2); border: 1px solid var(--line-soft); border-radius: var(--r-sm); padding: 10px 12px; margin-bottom: 7px; }
+.demo-cite.why { border-left: 3px solid var(--rust); }
+.demo-cite-top { display: flex; align-items: baseline; gap: 8px; }
+.demo-cite-id { font-family: var(--font-mono); font-size: 12px; color: var(--blue-bright); }
+.demo-cite.why .demo-cite-id { color: var(--rust); }
+.demo-cite-lines { font-family: var(--font-mono); font-size: 11px; color: var(--faint); }
+.demo-cite-tag { margin-left: auto; font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--blue-deep); border: 1px solid var(--line); border-radius: 20px; padding: 2px 8px; }
+.demo-cite-tag.why { color: var(--rust); border-color: var(--rust-dim); }
+.demo-cite-body { margin-top: 6px; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--muted); }
+
+/* caution panel flag */
+.demo-flag {
+  display: flex; gap: 10px; padding: 11px 13px; border-radius: var(--r-sm);
+  border: 1px solid rgba(207,162,122,0.5); background: rgba(207,162,122,0.14);
+  font-size: 13px; line-height: 1.5; color: var(--terra);
+}
+.demo-flag b { color: var(--text); font-weight: 600; }
+.demo-flag-mark { font-family: var(--font-mono); font-weight: 700; flex: 0 0 auto; opacity: 0.85; }
+
+/* who panel contributor rows */
+.demo-who { margin: 12px 0 10px; display: flex; flex-direction: column; gap: 8px; }
+.demo-who-row { display: flex; align-items: center; gap: 9px; }
+.demo-who-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rust); flex: 0 0 auto; }
+.demo-who-dot.dim { background: var(--sand); }
+.demo-who-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); }
+.demo-who-meta { font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); margin-left: auto; }
+
+/* progress dots */
+.demo-dots { display: flex; gap: 6px; justify-content: center; margin-top: 14px; }
+.demo-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: background var(--t-base) var(--ease), width var(--t-base) var(--ease); }
+.demo-dot.on { background: var(--rust); width: 18px; border-radius: 3px; }
+
+@media (max-width: 1000px) {
+  .hero { grid-template-columns: 1fr; max-width: 560px; gap: 8px; }
+  .hero-proof { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .primary-btn-glow::after, .demo-caret { animation: none; }
+  .primary-btn-glow::after { opacity: 0.4; }
+}
+/* ---------- centre anchor for the sign-in "Diving deep" moment ----------
+   An invisible zero-size marker pinned to the middle of the stage. When
+   sign-in is clicked, Inkling targets data-guide="center" and drifts here,
+   saying "Diving deep..." while the browser prepares to redirect. No layout
+   impact — it takes no space and is never seen. */
+.center-anchor {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+/* the stage must be a positioning context so left/top:50% is the stage centre */
+.stage { position: relative; }
+
+/* ---------- caption fades out after a few seconds ----------
+   The guide caption shows on each new line, then fades so it never
+   permanently covers whatever sits behind Inkling. It reappears when
+   he has something new to say (React re-adds the visible state on a
+   text change). Add to styles.css near the .guide-bubble rules. */
+.guide-bubble {
+  transition: opacity 600ms var(--ease), transform 600ms var(--ease);
+}
+.guide-bubble.faded {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-6px);
+  pointer-events: none;
+}
+/* keep the edge-anchored variants' horizontal offset while fading */
+.guide-bubble.anchor-right.faded { transform: translateX(-72%) translateY(-6px); }
+.guide-bubble.anchor-left.faded  { transform: translateX(-28%) translateY(-6px); }
+
+/* ============================================================
+   Consistent hover-lift — one motion language for every raised,
+   clickable surface. Cards and interactive tiles lift a touch and
+   deepen their shadow on hover; they settle back on press. Reading
+   surfaces and text are untouched. Append to styles.css.
+
+   The vocabulary, applied everywhere:
+     hover  -> translateY(-2px) + slightly stronger shadow + warmer border
+     active -> translateY(0)    (a small "press" so clicks feel physical)
+   ============================================================ */
+
+/* Shared transition so every liftable surface eases the same way.
+   (Some of these already animate transform/border/box-shadow; naming
+   them here just guarantees a consistent curve and duration.) */
+.repo-card,
+.cite,
+.demo-cite,
+.example,
+.aside-item,
+.aside-new,
+.hero-proof .demo {
+  transition:
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+  will-change: transform;
+}
+
+/* ---- the lift ---- */
+.repo-card:hover,
+.example:hover:not(:disabled),
+.aside-new:hover {
+  transform: translateY(-2px);
+  border-color: var(--sand);
+  box-shadow: 0 8px 22px rgba(0,0,0,0.24);
+}
+
+/* citations shift right instead of up (they read as a list, so a sideways
+   nudge suits them better than a lift) — keep that, just make it consistent */
+a.cite:hover {
+  transform: translateX(2px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.20);
+}
+
+/* sidebar conversation items: subtle lift + the existing bg change */
+.aside-item:hover {
+  transform: translateY(-1px);
+}
+
+/* ---- the press: everything settles on active, so clicks feel physical ---- */
+.repo-card:active,
+.example:active:not(:disabled),
+.aside-new:active,
+.aside-item:active,
+a.cite:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  transition-duration: 80ms;   /* snap down quickly, lift up slowly */
+}
+
+/* buttons already have their own hover; just guarantee the press settle
+   so they match the cards' physicality */
+.primary-btn:active:not(:disabled),
+.send-btn:active:not(:disabled),
+.ghost-btn:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .repo-card, .cite, .demo-cite, .example, .aside-item, .aside-new,
+  .hero-proof .demo {
+    transition: border-color var(--t-fast) var(--ease);
+  }
+  .repo-card:hover, .example:hover, .aside-new:hover,
+  a.cite:hover, .aside-item:hover,
+  .repo-card:active, .example:active, .aside-new:active,
+  .aside-item:active, a.cite:active {
+    transform: none;
+  }
 }

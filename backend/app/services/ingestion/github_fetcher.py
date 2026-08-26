@@ -117,6 +117,7 @@ class RawPR:
     reviews:       list = field(default_factory=list)
     files_changed: list = field(default_factory=list)   # join key to code chunks
     html_url:      str  = ""
+    author:        str = "unknown"   
 
 
 @dataclass

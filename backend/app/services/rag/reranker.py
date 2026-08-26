@@ -25,6 +25,7 @@ from sentence_transformers import CrossEncoder
 
 from app.core.config import settings
 from app.models.chunk import ChunkResult
+import math
 
 log = structlog.get_logger(__name__)
 
@@ -48,9 +49,10 @@ class Reranker:
         Loads the cross encoder model lazily on first use.
         Same pattern as EmbeddingService, avoids load time cost at import.
         """
+        #cap the model's input length so it can't receive an over-length sequence and emit nan
         if self._model is None:
             log.info("reranker_model_loading", model=settings.RERANKER_MODEL)
-            self._model = CrossEncoder(settings.RERANKER_MODEL, device="cpu")
+            self._model = CrossEncoder(settings.RERANKER_MODEL, device="cpu", max_length=512)
             log.info("reranker_model_ready")
         return self._model
 
@@ -83,7 +85,12 @@ class Reranker:
         scores = model.predict(pairs)
 
         for result, score in zip(chunk_results, scores):
-            result.rerank_score = float(score)
+            s = float(score)
+            # A cross-encoder can still emit nan on pathological inputs. nan as
+            # a sort key silently scrambles the ranking (it compares false
+            # against everything), so a nan-scored chunk lands in an arbitrary
+            # position and can outrank relevant chunks. Force nan to the bottom.
+            result.rerank_score = s if not math.isnan(s) else float("-inf")
 
         sorted_results = sorted(
             chunk_results,

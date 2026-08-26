@@ -245,7 +245,6 @@ class Chunker:
         return chunks
 
     # ── PR chunking ────────────────────────────────────────────────────────
-
     def chunk_pr(
         self,
         pr: RawPR,
@@ -263,6 +262,15 @@ class Chunker:
             closed (not merged) → "closed" (rejected PR — also valuable for archaeology)
             open → "open"
         """
+        """
+        Produces chunks from a PR body + review comments + formal reviews.
+        ...
+        """
+        # Skip automated PRs. Dependabot, github-actions, pre-commit-ci and
+        # friends generate high-volume, low-signal PRs that pollute retrieval.
+        # GitHub bot accounts conventionally end in "[bot]".
+        if pr.author and pr.author.endswith("[bot]"):
+            return []
         chunks = []
 
         if pr.merged:

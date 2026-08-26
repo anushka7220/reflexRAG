@@ -21,7 +21,7 @@
 
 import json
 from typing import AsyncGenerator
-
+import asyncio 
 
 async def token_event(content: str) -> str:
     """Formats a single token as an SSE data line."""
@@ -78,6 +78,7 @@ async def stream_rag_response(
         # Add space back except after the last word
         content = word if i == len(words) - 1 else word + " "
         yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+        await asyncio.sleep(0.03)
 
     # Citations arrive after the full answer text
     if citations:

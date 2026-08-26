@@ -238,6 +238,7 @@ class GitHubFetcherGraphQL:
           pageInfo {{ hasNextPage endCursor }}
           nodes {{
             number title body state merged url
+            author {{ login }}
             createdAt updatedAt mergedAt
             comments(first: {COMMENTS_PER_ITEM}) {{ nodes {{ body }} }}
             reviews(first: {REVIEWS_PER_PR}) {{
@@ -286,6 +287,7 @@ class GitHubFetcherGraphQL:
                     reviews=reviews,
                     files_changed=[f["path"] for f in (node.get("files") or {}).get("nodes") or [] if f.get("path")],
                     html_url=node.get("url") or "",
+                    author=((node.get("author") or {}).get("login")) or "unknown",
                 ))
             info = conn.get("pageInfo") or {}
             if not info.get("hasNextPage"):

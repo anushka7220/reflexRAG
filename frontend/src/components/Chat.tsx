@@ -4,6 +4,7 @@ import { api, streamChat } from "../lib/api";
 import type { Repo, StoredMessage, Turn } from "../lib/types";
 import Citations from "./Citations";
 import Inkling from "./Inkling";
+import { useGuide } from "../lib/guide";
 
 const EXAMPLES = [
   { kind: "why", text: "Why is this built the way it is?" },
@@ -73,6 +74,7 @@ export default function Chat({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [localSession, setLocalSession] = useState<string | null>(sessionId);
+  const { setBase } = useGuide();
 
   const threadRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -80,6 +82,12 @@ export default function Chat({
 
   useEffect(() => {
     let alive = true;
+
+    // The parent hands back the id of a session THIS component just created
+    // on the first question. There is nothing to load, and aborting here
+    // would kill the answer that is still streaming into the view.
+    if (sessionId && sessionId === localSession) return;
+
     abortRef.current?.abort();
     setLocalSession(sessionId);
 
@@ -101,6 +109,19 @@ export default function Chat({
       alive = false;
     };
   }, [sessionId, repo.id]);
+
+  const started = turns.length > 0;
+  useEffect(() => {
+    if (started) {
+      setBase({ target: null, hidden: true });
+    } else {
+      setBase({
+        target: "composer",
+        say: "Ask me why it's built this way.",
+        mood: "curious",
+      });
+    }
+  }, [started, setBase]);
 
   useEffect(() => {
     threadRef.current?.scrollTo({

@@ -8,6 +8,7 @@ import Chat from "./components/Chat";
 import Sidebar from "./components/Sidebar";
 import WaterFooter from "./components/WaterFooter";
 import GuideInkling from "./components/GuideInkling";
+import HeroDemo from "./components/HeroDemo";
 import { GuideProvider, useGuide } from "./lib/guide";
 
 type Boot = "checking" | "signed-out" | "signed-in";
@@ -91,11 +92,13 @@ function AppInner() {
   const [sidebarKey, setSidebarKey] = useState(0);
   const [theme, toggleTheme] = useTheme();
   const { setBase } = useGuide();
+  const [signingIn, setSigningIn] = useState(false);
 
   // Ambient guidance: whatever the app is doing, Inkling always has a
   // target and a line. Direct interaction (typing, hovering) temporarily
   // overrides this via focus()/blur() in the child components.
   useEffect(() => {
+    if (signingIn) return; // dive line is showing, don't override it
     if (boot === "signed-out") {
       setBase({ target: "signin", say: "Sign in and we'll dig into a repo.", mood: "curious" });
     } else if (!repo) {
@@ -105,7 +108,7 @@ function AppInner() {
     } else {
       setBase({ target: "composer", say: "Ask me why it's built this way.", mood: "curious" });
     }
-  }, [boot, repo?.id, repo?.status, setBase]);
+  }, [boot, repo?.id, repo?.status, setBase, signingIn]);
 
   useEffect(() => {
     consumeTokenFromHash();
@@ -113,6 +116,15 @@ function AppInner() {
     api.me().then((u) => { setUser(u); setBoot("signed-in"); })
       .catch(() => { auth.clear(); setBoot("signed-out"); });
   }, []);
+
+  function handleSignIn(e: React.MouseEvent) {
+    e.preventDefault();
+    setSigningIn(true);
+    // Inkling drifts to screen centre and announces the dive while the
+    // browser gets ready to leave for GitHub.
+    setBase({ target: "center", say: "Diving deep\u2026", mood: "working" });
+    window.setTimeout(() => { window.location.href = auth.loginUrl(); }, 1500);
+  }
 
   function goHome() { setRepo(null); setSessionId(null); }
   function signOut() { auth.clear(); setUser(null); setRepo(null); setSessionId(null); setBoot("signed-out"); }
@@ -127,12 +139,24 @@ function AppInner() {
       <div className="shell">
         <Header user={null} repo={null} theme={theme} onToggleTheme={toggleTheme} onHome={goHome} onSignOut={signOut} />
         <div className="stage">
-          <div className="hero-card" data-guide="signin" style={{ maxWidth: 520 }}>
-            <span className="eyebrow">reflexRAG</span>
-            <h1 className="headline">The code says what.<br />The history says <em>why</em>.</h1>
-            <p className="sub">Chat with any public GitHub repository, including the issues, pull requests, and commits that shaped it.</p>
-            <a className="primary-btn" href={auth.loginUrl()}>Continue with GitHub</a>
-            <p className="hint">Read-only access to public repositories.</p>
+          <div className="center-anchor" data-guide="center" aria-hidden="true" />
+          <div className="hero" data-guide="signin">
+            <div className="hero-copy">
+              <span className="eyebrow">reflexRAG</span>
+              <h1 className="headline">The code says what.<br />The history says <em>why</em>.</h1>
+              <p className="sub">
+                You inherited a codebase you didn't write. reflexRAG reads the
+                code <em>and</em> the issues, PRs, and commits behind it &mdash;
+                so you can ask <em>why</em>, not just <em>what</em>.
+              </p>
+              <a className="primary-btn primary-btn-glow" href={auth.loginUrl()} onClick={handleSignIn}>
+                Continue with GitHub
+              </a>
+              <p className="hint">Read-only. Nothing leaves GitHub.</p>
+            </div>
+            <div className="hero-proof">
+              <HeroDemo />
+            </div>
           </div>
         </div>
         <WaterFooter />
@@ -156,7 +180,7 @@ function AppInner() {
         <div className="body">
           <Sidebar repoId={repo.id} activeSessionId={sessionId} onSelect={setSessionId} onNew={() => setSessionId(null)} refreshKey={sidebarKey} />
           <div className="main">
-            <Chat key={sessionId ?? "new"} repo={repo} sessionId={sessionId}
+            <Chat repo={repo} sessionId={sessionId}
               onSessionCreated={(id) => { setSessionId(id); setSidebarKey((k) => k + 1); }} />
           </div>
         </div>

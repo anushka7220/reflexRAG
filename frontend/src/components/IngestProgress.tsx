@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { Repo } from "../lib/types";
-import Inkling from "./Inkling";
 
 const STAGES: { key: string; label: string }[] = [
   { key: "fetching", label: "Reading issues, pull requests, and commits" },
@@ -9,13 +8,6 @@ const STAGES: { key: string; label: string }[] = [
   { key: "embedding", label: "Building the search index" },
   { key: "extracting", label: "Mapping who owns what" },
   { key: "done", label: "Ready" },
-];
-
-const QUIPS = [
-  "Eight arms, all busy.",
-  "Reading the arguments in the PRs\u2026",
-  "Someone had opinions in issue #12.",
-  "Connecting code to the people who wrote it.",
 ];
 
 export default function IngestProgress({
@@ -26,13 +18,8 @@ export default function IngestProgress({
   const [stage, setStage] = useState(repo.status || "fetching");
   const [pct, setPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [quip, setQuip] = useState(0);
   const timer = useRef<number | null>(null);
 
-  useEffect(() => {
-    const q = window.setInterval(() => setQuip((n) => (n + 1) % QUIPS.length), 5200);
-    return () => window.clearInterval(q);
-  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -61,8 +48,8 @@ export default function IngestProgress({
 
   return (
     <div className="stage">
-      <div className="hero-split">
-        <div className="prog-card">
+      <div className="solo-wrap">
+        <div className="prog-card pane-solo">
           <span className="eyebrow">Indexing</span>
           <h1 className="headline">{repo.owner}/<em>{repo.name}</em></h1>
           <p className="sub">
@@ -78,7 +65,7 @@ export default function IngestProgress({
             </>
           ) : (
             <>
-              <div className="prog-stages">
+              <div className="prog-stages" data-guide="progress">
                 {STAGES.map((s, i) => {
                   const state =
                     currentIndex < 0 ? "" : i < currentIndex ? "past" : i === currentIndex ? "active" : "";
@@ -97,10 +84,6 @@ export default function IngestProgress({
               <p className="hint">This runs in the background. Leaving won&rsquo;t stop it.</p>
             </>
           )}
-        </div>
-        <div className="inkling-stage">
-          <Inkling mood={error ? "idle" : "working"} size={165} />
-          <span className="inkling-say">{error ? "Hm. That one fought back." : QUIPS[quip]}</span>
         </div>
       </div>
     </div>
